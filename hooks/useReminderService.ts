@@ -39,7 +39,9 @@ export const useReminderService = (user: User | null) => {
             console.log('ReminderService: Fetching tasks...');
             try {
                 let projects: Project[] = [];
-                if (user.role === Role.PM) {
+                if (user.role === Role.ADMIN) {
+                    projects = await api.getProjectsByCompany(user.companyId);
+                } else if (user.role === Role.PM) {
                     projects = await api.getProjectsByManager(user.id);
                 } else {
                     projects = await api.getProjectsByUser(user.id);
@@ -65,8 +67,6 @@ export const useReminderService = (user: User | null) => {
         const checkReminders = () => {
             if (document.hidden) {
                 // Don't show notifications if the tab isn't active, to avoid being spammy.
-                // Could be changed if notifications are desired even when user is away.
-                // For this app, we assume they see reminders when they are active.
                 // A better approach for critical reminders might be service workers.
                 return;
             }
@@ -83,8 +83,8 @@ export const useReminderService = (user: User | null) => {
                         const project = projectsRef.current.get(task.projectId);
                         const title = `Task Reminder: ${task.text}`;
                         const options = {
-                            body: `Due soon for project: ${project?.name || 'Unknown Project'}.`,
-                            icon: '/favicon.svg', // Optional: Add an icon
+                            body: `This task is due soon for project: ${project?.name || 'Unknown Project'}.`,
+                            icon: '/favicon.svg',
                         };
                         
                         // Use the Notification API

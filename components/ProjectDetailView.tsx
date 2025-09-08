@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Project, Todo, Document as Doc, User, Role, DocumentAcknowledgement, DocumentStatus, DocumentCategory, AuditLog, AuditLogAction, TodoPriority, SafetyIncident, IncidentSeverity, IncidentType, IncidentStatus, SubTask, Comment, ProjectHealth, TodoStatus, DailyLog, Equipment, EquipmentStatus, RFI, RFIStatus, CostEstimate } from '../types';
+import { Project, Todo, Document as Doc, User, Role, DocumentAcknowledgement, DocumentStatus, DocumentCategory, AuditLog, AuditLogAction, TodoPriority, SafetyIncident, IncidentSeverity, IncidentType, IncidentStatus, SubTask, Comment, ProjectHealth, TodoStatus, DailyLog, Equipment, EquipmentStatus, RFI, RFIStatus, CostEstimate, Photo } from '../types';
 import { api } from '../services/mockApi';
 import { Card } from './ui/Card';
 import { Button } from './ui/Button';
@@ -530,7 +530,7 @@ interface ProjectDetailProps {
 }
 
 type DocWithProgress = Doc & { uploadProgress?: number };
-type Tab = 'overview' | 'documents' | 'tasks' | 'team' | 'equipment' | 'safety' | 'rfis' | 'activity' | 'daily-logs' | 'tools';
+type Tab = 'overview' | 'documents' | 'photos' | 'tasks' | 'team' | 'equipment' | 'safety' | 'rfis' | 'activity' | 'daily-logs' | 'tools';
 
 const TabButton: React.FC<{
     label: string;
@@ -577,7 +577,8 @@ const formatRelativeTime = (date: Date): string => {
 const getActionIcon = (action: AuditLogAction): React.ReactNode => {
     const baseClass = "h-5 w-5";
     if (action.startsWith('TIMESHEET')) return <svg xmlns="http://www.w3.org/2000/svg" className={baseClass} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>;
-    if (action.startsWith('DOCUMENT')) return <svg xmlns="http://www.w3.org/2000/svg" className={baseClass} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2-2z" /></svg>;
+    if (action.startsWith('DOCUMENT') || action.startsWith('CATEGORY')) return <svg xmlns="http://www.w3.org/2000/svg" className={baseClass} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2-2z" /></svg>;
+    if (action.startsWith('PHOTO')) return <svg xmlns="http://www.w3.org/2000/svg" className={baseClass} fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M6.827 6.175A2.31 2.31 0 0 1 5.186 7.23c-.38.054-.757.112-1.134.175C2.999 7.58 2.25 8.507 2.25 9.574V18a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18V9.574c0-1.067-.75-1.994-1.802-2.169a47.865 47.865 0 0 0-1.134-.175 2.31 2.31 0 0 1-1.64-1.055l-.822-1.316a2.192 2.192 0 0 0-1.736-1.039 48.776 48.776 0 0 0-5.232 0 2.192 2.192 0 0 0-1.736 1.039l-.821 1.316Z" /><path strokeLinecap="round" strokeLinejoin="round" d="M16.5 12.75a4.5 4.5 0 1 1-9 0 4.5 4.5 0 0 1 9 0ZM18.75 10.5h.008v.008h-.008V10.5Z" /></svg>
     if (action.startsWith('USER')) return <svg xmlns="http://www.w3.org/2000/svg" className={baseClass} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" /></svg>;
     if (action.startsWith('TODO') || action.startsWith('SUBTASK')) return <svg xmlns="http://www.w3.org/2000/svg" className={baseClass} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" /></svg>;
     if (action.startsWith('SAFETY')) return <svg xmlns="http://www.w3.org/2000/svg" className={baseClass} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>;
@@ -620,6 +621,7 @@ export const ProjectDetailView: React.FC<ProjectDetailProps> = ({ project, user,
     const [personnel, setPersonnel] = useState<User[]>([]);
     const [unassignedUsers, setUnassignedUsers] = useState<User[]>([]);
     const [documents, setDocuments] = useState<DocWithProgress[]>([]);
+    const [photos, setPhotos] = useState<Photo[]>([]);
     const [todos, setTodos] = useState<Todo[]>([]);
     const [incidents, setIncidents] = useState<SafetyIncident[]>([]);
     const [rfis, setRfis] = useState<RFI[]>([]);
@@ -641,18 +643,23 @@ export const ProjectDetailView: React.FC<ProjectDetailProps> = ({ project, user,
     const [showSafetyAnalysisModal, setShowSafetyAnalysisModal] = useState(false);
     const [safetyReport, setSafetyReport] = useState('');
     const [isGeneratingReport, setIsGeneratingReport] = useState(false);
+    const [viewingPhoto, setViewingPhoto] = useState<Photo | null>(null);
     
     // States for task management
     const [newTodoText, setNewTodoText] = useState('');
     const [newTodoPriority, setNewTodoPriority] = useState<TodoPriority>(TodoPriority.MEDIUM);
     const [newTodoDueDate, setNewTodoDueDate] = useState<string>('');
     const [showAddTaskForm, setShowAddTaskForm] = useState(false);
-    const [newTodoSubTasks, setNewTodoSubTasks] = useState<{id: number, text: string}[]>([{ id: Date.now(), text: '' }]);
     const [newSubTaskText, setNewSubTaskText] = useState<Record<number, string>>({});
     const [editingSubTask, setEditingSubTask] = useState<{ todoId: number; subTaskId: number } | null>(null);
     const [editingSubTaskText, setEditingSubTaskText] = useState('');
     const [editingTodo, setEditingTodo] = useState<(Partial<Todo> & { id: number }) | null>(null);
     const [taskSortKey, setTaskSortKey] = useState('priority_desc'); // Default sort: Priority High to Low
+    const [taskFilters, setTaskFilters] = useState({
+        priority: 'all',
+        status: 'all',
+        searchText: '',
+    });
     const [expandedTasks, setExpandedTasks] = useState<Set<number>>(new Set());
     const [newCommentText, setNewCommentText] = useState<Record<number, string>>({});
     const [showAiTaskForm, setShowAiTaskForm] = useState(false);
@@ -663,6 +670,10 @@ export const ProjectDetailView: React.FC<ProjectDetailProps> = ({ project, user,
     const fileInputRef = useRef<HTMLInputElement>(null);
     const moreMenuRef = useRef<HTMLDivElement>(null);
     const [openMoreMenuId, setOpenMoreMenuId] = useState<number | null>(null);
+
+    // States for photo upload
+    const photoInputRef = useRef<HTMLInputElement>(null);
+    const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
     
     // States for team management
     const [selectedUserToAssign, setSelectedUserToAssign] = useState<string>('');
@@ -722,6 +733,7 @@ export const ProjectDetailView: React.FC<ProjectDetailProps> = ({ project, user,
                 dailyLogsData,
                 equipmentData,
                 rfisData,
+                photosData,
             ] = await Promise.all([
                 api.getUsersByProject(project.id),
                 isManager ? api.getUnassignedUsers(project.id, user.companyId) : Promise.resolve([]),
@@ -734,6 +746,7 @@ export const ProjectDetailView: React.FC<ProjectDetailProps> = ({ project, user,
                 api.getDailyLogsByProject(project.id),
                 api.getEquipmentByCompany(user.companyId).then(allEquipment => allEquipment.filter(e => e.projectId === project.id)),
                 api.getRFIsByProject(project.id),
+                api.getPhotosByProject(project.id),
             ]);
             setPersonnel(personnelData);
             setUnassignedUsers(unassignedData);
@@ -746,6 +759,7 @@ export const ProjectDetailView: React.FC<ProjectDetailProps> = ({ project, user,
             setDailyLogs(dailyLogsData);
             setEquipment(equipmentData);
             setRfis(rfisData);
+            setPhotos(photosData);
         } catch (error) {
             console.error("Failed to fetch project details:", error);
             addToast('Failed to load project data.', 'error');
@@ -805,30 +819,26 @@ export const ProjectDetailView: React.FC<ProjectDetailProps> = ({ project, user,
         const file = event.target.files?.[0];
         if (!file) return;
 
-        // Reset the input so the same file can be uploaded again
         if (event.target) event.target.value = ''; 
     
-        // Basic validation
-        if (file.size > 10 * 1024 * 1024) { // 10 MB limit
+        if (file.size > 10 * 1024 * 1024) {
             addToast("File size cannot exceed 10MB.", "error");
             return;
         }
     
         let newDocId: number | null = null;
+        const originalCategory = DocumentCategory.GENERAL;
         try {
-            // Step 1: Initiate upload and get a document ID
             const initialDoc = await api.initiateDocumentUpload({
                 name: file.name,
                 projectId: project.id,
-                category: DocumentCategory.GENERAL, // Default category
+                category: originalCategory,
                 creatorId: user.id
             });
             newDocId = initialDoc.id;
     
-            // Add to UI immediately with uploading state
             setDocuments(prevDocs => [{ ...initialDoc, uploadProgress: 0 }, ...prevDocs]);
     
-            // Step 2: Simulate chunked upload with progress
             await api.performChunkedUpload(newDocId, file.size, (percent) => {
                 setDocuments(prevDocs =>
                     prevDocs.map(d =>
@@ -837,23 +847,65 @@ export const ProjectDetailView: React.FC<ProjectDetailProps> = ({ project, user,
                 );
             });
             
-            // Step 3: Finalize the upload (backend processes it)
-            await api.finalizeDocumentUpload(newDocId, user.id);
+            const finalizedDoc = await api.finalizeDocumentUpload(newDocId, user.id);
             
             addToast(`"${file.name}" uploaded successfully and is being processed.`, 'success');
+            
+            if (finalizedDoc.category !== originalCategory) {
+                 addToast(`AI suggested the category "${finalizedDoc.category}" for "${finalizedDoc.name}".`, 'success');
+            }
     
         } catch (error) {
             addToast(`Upload failed for "${file.name}".`, "error");
             console.error(error);
-            // Clean up the failed upload from the UI
             if (newDocId) {
                  setDocuments(prevDocs => prevDocs.filter(d => d.id !== newDocId));
             }
         } finally {
-            // Refresh data from the source of truth
             fetchData();
         }
     };
+
+    const handlePhotoUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0];
+        if (!file) return;
+
+        if (event.target) event.target.value = '';
+
+        if (!file.type.startsWith('image/')) {
+            addToast("Please upload a valid image file (jpeg, png, etc.).", "error");
+            return;
+        }
+
+        if (file.size > 5 * 1024 * 1024) { // 5 MB limit for photos
+            addToast("Image size cannot exceed 5MB.", "error");
+            return;
+        }
+        
+        const reader = new FileReader();
+        reader.readAsDataURL(file);
+        reader.onload = async () => {
+            const base64Image = reader.result as string;
+            if (!base64Image) {
+                 addToast("Could not read the image file.", "error");
+                 return;
+            }
+            setIsUploadingPhoto(true);
+            try {
+                await api.uploadPhoto(project.id, user.id, base64Image);
+                addToast("Photo uploaded and is being analyzed by AI.", "success");
+                fetchData();
+            } catch (error) {
+                 addToast("Photo upload failed.", "error");
+                 console.error(error);
+            } finally {
+                setIsUploadingPhoto(false);
+            }
+        };
+        reader.onerror = () => {
+             addToast("Error reading file.", "error");
+        }
+    }
 
     const handleUpdateTodo = async (todoId: number, updates: Partial<Todo>) => {
         try {
@@ -865,6 +917,16 @@ export const ProjectDetailView: React.FC<ProjectDetailProps> = ({ project, user,
         }
     };
     
+    const handleUpdateSubTask = async (todoId: number, subTaskId: number, updates: Partial<SubTask>) => {
+        try {
+            await api.updateSubTask(todoId, subTaskId, updates, user.id);
+            fetchData(); // Just refetch all data for simplicity
+            // No toast here to avoid being noisy for every subtask check
+        } catch (error) {
+            addToast("Failed to update sub-task.", "error");
+        }
+    };
+
     const handleAddTodo = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!newTodoText.trim()) {
@@ -891,6 +953,29 @@ export const ProjectDetailView: React.FC<ProjectDetailProps> = ({ project, user,
         }
     };
     
+    const handleAddSubTask = async (todoId: number) => {
+        const text = newSubTaskText[todoId];
+        if (!text || !text.trim()) return;
+        try {
+            await api.addSubTask(todoId, text, user.id);
+            addToast('Sub-task added!', 'success');
+            setNewSubTaskText(prev => ({ ...prev, [todoId]: '' }));
+            fetchData(); // Refreshes all data
+        } catch (error) {
+            addToast('Failed to add sub-task.', 'error');
+        }
+    };
+
+    const handleDeleteSubTask = async (todoId: number, subTaskId: number) => {
+        try {
+            await api.deleteSubTask(todoId, subTaskId, user.id);
+            addToast('Sub-task deleted.', 'success');
+            fetchData();
+        } catch (error) {
+            addToast('Failed to delete sub-task.', 'error');
+        }
+    };
+
     const handleAddComment = async (todoId: number) => {
         const text = newCommentText[todoId];
         if (!text || !text.trim()) return;
@@ -1049,8 +1134,23 @@ export const ProjectDetailView: React.FC<ProjectDetailProps> = ({ project, user,
     const ChevronDownIcon = () => <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>;
     const ChevronUpIcon = () => <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" /></svg>;
     
-    const sortedTodos = useMemo(() => {
-        return [...todos].sort((a, b) => {
+    const filteredAndSortedTodos = useMemo(() => {
+        let filtered = [...todos];
+
+        // Apply filters
+        if (taskFilters.priority !== 'all') {
+            filtered = filtered.filter(t => t.priority === taskFilters.priority);
+        }
+        if (taskFilters.status !== 'all') {
+            filtered = filtered.filter(t => t.status === taskFilters.status);
+        }
+        if (taskFilters.searchText) {
+            const lowerSearchText = taskFilters.searchText.toLowerCase();
+            filtered = filtered.filter(t => t.text.toLowerCase().includes(lowerSearchText));
+        }
+
+        // Apply sorting
+        return filtered.sort((a, b) => {
             const priorityOrder = { [TodoPriority.HIGH]: 0, [TodoPriority.MEDIUM]: 1, [TodoPriority.LOW]: 2 };
             switch (taskSortKey) {
                 case 'priority_desc':
@@ -1069,7 +1169,8 @@ export const ProjectDetailView: React.FC<ProjectDetailProps> = ({ project, user,
                     return 0;
             }
         });
-    }, [todos, taskSortKey]);
+    }, [todos, taskSortKey, taskFilters]);
+
 
     if (loading) {
         return (
@@ -1112,6 +1213,7 @@ export const ProjectDetailView: React.FC<ProjectDetailProps> = ({ project, user,
                      <TabButton label="Overview" tabName="overview" activeTab={activeTab} onClick={setActiveTab} icon={<svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" /></svg>} />
                      <TabButton label="Tasks" tabName="tasks" activeTab={activeTab} onClick={setActiveTab} icon={<svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" /></svg>} />
                      <TabButton label="Documents" tabName="documents" activeTab={activeTab} onClick={setActiveTab} icon={<svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" /></svg>} />
+                     <TabButton label="Photos" tabName="photos" activeTab={activeTab} onClick={setActiveTab} icon={<svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M6.827 6.175A2.31 2.31 0 0 1 5.186 7.23c-.38.054-.757.112-1.134.175C2.999 7.58 2.25 8.507 2.25 9.574V18a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18V9.574c0-1.067-.75-1.994-1.802-2.169a47.865 47.865 0 0 0-1.134-.175 2.31 2.31 0 0 1-1.64-1.055l-.822-1.316a2.192 2.192 0 0 0-1.736-1.039 48.776 48.776 0 0 0-5.232 0 2.192 2.192 0 0 0-1.736 1.039l-.821 1.316Z" /><path strokeLinecap="round" strokeLinejoin="round" d="M16.5 12.75a4.5 4.5 0 1 1-9 0 4.5 4.5 0 0 1 9 0ZM18.75 10.5h.008v.008h-.008V10.5Z" /></svg>} />
                      <TabButton label="Tools" tabName="tools" activeTab={activeTab} onClick={setActiveTab} icon={<svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M11.42 15.17L17.25 21A2.652 2.652 0 0021 17.25l-5.877-5.877M11.42 15.17l.354-.354a3.75 3.75 0 00-5.303-5.303l-.354.353M3 21l3.75-3.75m.75-7.5l3-3L11.25 3" /></svg>} />
                      <TabButton label="RFIs" tabName="rfis" activeTab={activeTab} onClick={setActiveTab} icon={<svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>} />
                      <TabButton label="Daily Logs" tabName="daily-logs" activeTab={activeTab} onClick={setActiveTab} icon={<svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>} />
@@ -1225,29 +1327,81 @@ export const ProjectDetailView: React.FC<ProjectDetailProps> = ({ project, user,
                             </div>
                         </div>
                     )}
-                    <div className="flex justify-end mb-4">
-                        <div className="flex items-center gap-2">
-                            <label htmlFor="task-sort" className="text-sm font-medium text-slate-700">Sort by:</label>
-                            <select
-                                id="task-sort"
-                                value={taskSortKey}
-                                onChange={e => setTaskSortKey(e.target.value)}
-                                className="block pl-3 pr-8 py-2 text-base border-slate-300 focus:outline-none focus:ring-sky-500 focus:border-sky-500 sm:text-sm rounded-md"
-                            >
-                                <option value="priority_desc">Priority (High to Low)</option>
-                                <option value="priority_asc">Priority (Low to High)</option>
-                                <option value="dueDate_desc">Due Date (Newest first)</option>
-                                <option value="dueDate_asc">Due Date (Oldest first)</option>
-                            </select>
+                    
+                    <div className="flex flex-wrap gap-4 justify-between items-end mb-4">
+                        <div className="flex-grow">
+                            <label htmlFor="task-search" className="text-sm font-medium text-slate-700">Search Tasks</label>
+                            <input
+                                id="task-search"
+                                type="text"
+                                placeholder="Find a task..."
+                                value={taskFilters.searchText}
+                                onChange={e => setTaskFilters(prev => ({ ...prev, searchText: e.target.value }))}
+                                className="mt-1 block w-full max-w-xs p-2 border border-slate-300 rounded-md shadow-sm focus:ring-sky-500 focus:border-sky-500"
+                            />
+                        </div>
+
+                        <div className="flex flex-wrap gap-4">
+                            <div>
+                                <label htmlFor="task-priority-filter" className="text-sm font-medium text-slate-700">Filter Priority</label>
+                                <select
+                                    id="task-priority-filter"
+                                    value={taskFilters.priority}
+                                    onChange={e => setTaskFilters(prev => ({ ...prev, priority: e.target.value }))}
+                                    className="mt-1 block w-full pl-3 pr-8 py-2 text-base border-slate-300 bg-white focus:outline-none focus:ring-sky-500 focus:border-sky-500 sm:text-sm rounded-md"
+                                >
+                                    <option value="all">All Priorities</option>
+                                    {Object.values(TodoPriority).map(p => <option key={p} value={p}>{p}</option>)}
+                                </select>
+                            </div>
+                            
+                            <div>
+                                <label htmlFor="task-status-filter" className="text-sm font-medium text-slate-700">Filter Status</label>
+                                <select
+                                    id="task-status-filter"
+                                    value={taskFilters.status}
+                                    onChange={e => setTaskFilters(prev => ({ ...prev, status: e.target.value }))}
+                                    className="mt-1 block w-full pl-3 pr-8 py-2 text-base border-slate-300 bg-white focus:outline-none focus:ring-sky-500 focus:border-sky-500 sm:text-sm rounded-md"
+                                >
+                                    <option value="all">All Statuses</option>
+                                    {Object.values(TodoStatus).map(s => <option key={s} value={s}>{s}</option>)}
+                                </select>
+                            </div>
+
+                            <div>
+                                <label htmlFor="task-sort" className="text-sm font-medium text-slate-700">Sort by</label>
+                                <select
+                                    id="task-sort"
+                                    value={taskSortKey}
+                                    onChange={e => setTaskSortKey(e.target.value)}
+                                    className="mt-1 block w-full pl-3 pr-8 py-2 text-base border-slate-300 bg-white focus:outline-none focus:ring-sky-500 focus:border-sky-500 sm:text-sm rounded-md"
+                                >
+                                    <option value="priority_desc">Priority (High to Low)</option>
+                                    <option value="priority_asc">Priority (Low to High)</option>
+                                    <option value="dueDate_desc">Due Date (Newest first)</option>
+                                    <option value="dueDate_asc">Due Date (Oldest first)</option>
+                                </select>
+                            </div>
                         </div>
                     </div>
 
                     <KanbanBoard 
-                        todos={sortedTodos}
+                        todos={filteredAndSortedTodos}
                         onUpdateTaskStatus={(todoId, newStatus) => handleUpdateTodo(todoId, { status: newStatus })}
                         onUpdateTodo={handleUpdateTodo}
-                        onUpdateSubTask={(todoId, subTaskId, updates) => { /* Placeholder */ }}
+                        onUpdateSubTask={handleUpdateSubTask}
+                        onAddSubTask={handleAddSubTask}
+                        onDeleteSubTask={handleDeleteSubTask}
                         canManageTasks={canManageTasks}
+                        user={user}
+                        addToast={addToast}
+                        onRefreshData={fetchData}
+                        newSubTaskText={newSubTaskText}
+                        setNewSubTaskText={setNewSubTaskText}
+                        editingSubTask={editingSubTask}
+                        setEditingSubTask={setEditingSubTask}
+                        editingSubTaskText={editingSubTaskText}
+                        setEditingSubTaskText={setEditingSubTaskText}
                     />
                 </Card>
             )}
@@ -1381,6 +1535,49 @@ export const ProjectDetailView: React.FC<ProjectDetailProps> = ({ project, user,
                             <p className="text-center text-slate-500 py-4">No documents have been uploaded for this project.</p>
                         )}
                     </div>
+                </Card>
+            )}
+
+            {activeTab === 'photos' && (
+                <Card>
+                    <div className="flex flex-wrap justify-between items-center gap-4 mb-4">
+                        <h3 className="text-xl font-semibold text-slate-700">Project Photos</h3>
+                        {canUploadDocs && (
+                             <>
+                                <input
+                                    type="file"
+                                    ref={photoInputRef}
+                                    onChange={handlePhotoUpload}
+                                    className="hidden"
+                                    accept="image/*"
+                                />
+                                <Button onClick={() => photoInputRef.current?.click()} isLoading={isUploadingPhoto}>
+                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                        <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                                    </svg>
+                                    Upload Photo
+                                </Button>
+                            </>
+                        )}
+                    </div>
+                     <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+                        {isUploadingPhoto && (
+                            <div className="aspect-square bg-slate-100 rounded-lg flex items-center justify-center animate-pulse">
+                                <svg className="h-10 w-10 text-slate-300" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+                            </div>
+                        )}
+                        {photos.map(photo => (
+                            <div key={photo.id} className="group relative aspect-square cursor-pointer" onClick={() => setViewingPhoto(photo)}>
+                                <img src={photo.url} alt={photo.description} className="w-full h-full object-cover rounded-lg" />
+                                <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity rounded-lg flex items-end p-2">
+                                    <p className="text-white text-xs line-clamp-2">{photo.description}</p>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                    {photos.length === 0 && !isUploadingPhoto && (
+                        <p className="text-center text-slate-500 py-8">No photos have been uploaded for this project yet.</p>
+                    )}
                 </Card>
             )}
 
@@ -1769,6 +1966,50 @@ export const ProjectDetailView: React.FC<ProjectDetailProps> = ({ project, user,
                     onClose={() => setShowAiModal(null)}
                     onNewLog={fetchData}
                 />
+            )}
+            {viewingPhoto && (
+                 <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4" onClick={() => setViewingPhoto(null)}>
+                    <Card className="w-full max-w-4xl max-h-[90vh] flex flex-col md:flex-row gap-4" onClick={e => e.stopPropagation()}>
+                        <div className="flex-shrink-0 md:w-2/3">
+                            <img src={viewingPhoto.url} alt={viewingPhoto.description} className="w-full h-full object-contain rounded-lg" />
+                        </div>
+                        <div className="flex-grow flex flex-col">
+                            <h3 className="text-lg font-bold">AI Analysis</h3>
+                            <div className="overflow-y-auto mt-2 space-y-4">
+                                <div>
+                                    <label className="text-sm font-bold text-slate-500">Description</label>
+                                    <p>{viewingPhoto.description}</p>
+                                </div>
+                                {viewingPhoto.safetyHazard && viewingPhoto.safetyHazard !== 'None' && (
+                                     <div className="p-3 bg-red-50 border-l-4 border-red-500 text-red-800 rounded-r-md">
+                                        <label className="font-bold flex items-center gap-2">
+                                            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.21 3.001-1.742 3.001H4.42c-1.532 0-2.492-1.667-1.742-3.001l5.58-9.92zM10 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" /></svg>
+                                            Safety Hazard Identified
+                                        </label>
+                                        <p className="mt-1">{viewingPhoto.safetyHazard}</p>
+                                    </div>
+                                )}
+                                <div>
+                                    <label className="text-sm font-bold text-slate-500">Tags</label>
+                                    <div className="flex flex-wrap gap-2 mt-1">
+                                        {viewingPhoto.tags.map(tag => <span key={tag} className="bg-slate-200 px-2 py-1 rounded-full text-xs font-medium">{tag}</span>)}
+                                    </div>
+                                </div>
+                                <div>
+                                    <label className="text-sm font-bold text-slate-500">Uploaded By</label>
+                                    <p>{companyUsers.find(u => u.id === viewingPhoto.uploaderId)?.name || 'Unknown User'}</p>
+                                </div>
+                                 <div>
+                                    <label className="text-sm font-bold text-slate-500">Date</label>
+                                    <p>{new Date(viewingPhoto.uploadedAt).toLocaleString()}</p>
+                                </div>
+                            </div>
+                            <div className="mt-auto pt-4 text-right">
+                                <Button variant="secondary" onClick={() => setViewingPhoto(null)}>Close</Button>
+                            </div>
+                        </div>
+                    </Card>
+                </div>
             )}
         </div>
     );

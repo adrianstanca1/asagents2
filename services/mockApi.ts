@@ -1,4 +1,4 @@
-import { Company, Document, Project, Role, Timesheet, TimesheetStatus, Todo, User, ProjectAssignment, DocumentAcknowledgement, Site, DocumentStatus, CompanySettings, DocumentCategory, AuditLog, AuditLogAction, TodoPriority, SafetyIncident, IncidentStatus, IncidentSeverity, IncidentType, SubTask, Comment, ProjectHealth, TodoStatus, DailyLog, CostEstimate, Equipment, EquipmentStatus, ResourceAssignment, WorkType, Break, RFI, RFIStatus, AISearchResult } from '../types';
+import { Company, Document, Project, Role, Timesheet, TimesheetStatus, Todo, User, ProjectAssignment, DocumentAcknowledgement, Site, DocumentStatus, CompanySettings, DocumentCategory, AuditLog, AuditLogAction, TodoPriority, SafetyIncident, IncidentStatus, IncidentSeverity, IncidentType, SubTask, Comment, ProjectHealth, TodoStatus, DailyLog, CostEstimate, Equipment, EquipmentStatus, ResourceAssignment, WorkType, Break, RFI, RFIStatus, AISearchResult, Photo } from '../types';
 import { GoogleGenAI, Type } from "@google/genai";
 
 let companies: Company[] = [
@@ -76,7 +76,7 @@ let todos: Todo[] = [
         { id: 2, text: 'Pump is on standby. Just need the final word.', creatorId: 7, createdAt: new Date(Date.now() - 1 * 60 * 60 * 1000) }
     ], createdAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000), creatorId: 2 
   },
-  { id: 3, text: 'Order drywall materials', status: TodoStatus.TODO, projectId: 1, priority: TodoPriority.HIGH, dueDate: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000), createdAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000), creatorId: 7 },
+  { id: 3, text: 'Order drywall materials', status: TodoStatus.TODO, projectId: 1, priority: TodoPriority.HIGH, dueDate: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000), reminderAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000), createdAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000), creatorId: 7 },
   { id: 4, text: 'Final site cleanup', status: TodoStatus.TODO, projectId: 1, priority: TodoPriority.LOW, createdAt: new Date(), creatorId: 7 },
 ];
 
@@ -126,6 +126,8 @@ let resourceAssignments: ResourceAssignment[] = [
     { id: 4, resourceId: 3, resourceType: 'user', projectId: 2, startDate: new Date(Date.now() + 11 * 24 * 60 * 60 * 1000), endDate: new Date(Date.now() + 25 * 24 * 60 * 60 * 1000) }, // Charlie
     { id: 5, resourceId: 4, resourceType: 'equipment', projectId: 2, startDate: new Date(), endDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) }, // F-150
 ];
+
+let photos: Photo[] = [];
 
 const initialAuditLogs: Omit<AuditLog, 'id'>[] = [
     { projectId: 1, actorId: 2, action: AuditLogAction.TIMESHEET_APPROVED, target: { type: 'timesheet', id: 2, name: `for ${users.find(u => u.id === 4)?.name}` }, timestamp: new Date(Date.now() - 1 * 60 * 60 * 1000) },
@@ -563,9 +565,9 @@ export const api = {
       doc.status = isSafe ? DocumentStatus.APPROVED : DocumentStatus.QUARANTINED;
 
       if (isSafe) {
+          const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
           // Enhance with AI-powered content indexing
           try {
-              const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
               const prompt = `Based on the document title "${doc.name}" and its category "${doc.category}", generate a concise, 2-3 sentence summary of its likely contents for a search index within a construction project management app. Focus on keywords relevant to construction.`;
               const response = await ai.models.generateContent({
                   model: 'gemini-2.5-flash',
@@ -574,8 +576,47 @@ export const api = {
               doc.indexedContent = response.text;
           } catch (error) {
               console.error("AI content indexing failed:", error);
-              // Fallback to simple indexing
               doc.indexedContent = `Content indexing for ${doc.name}. Category: ${doc.category}.`;
+          }
+
+          // AI-powered category suggestion
+          if (doc.indexedContent) {
+            try {
+                const categoryPrompt = `You are an intelligent document classifier for a construction management system. Based on the document's title and content summary, choose the most appropriate category.
+Title: "${doc.name}"
+Content Summary: "${doc.indexedContent}"
+Respond with a JSON object.`;
+                const response = await ai.models.generateContent({
+                    model: 'gemini-2.5-flash',
+                    contents: categoryPrompt,
+                    config: {
+                        responseMimeType: 'application/json',
+                        responseSchema: {
+                            type: Type.OBJECT,
+                            properties: {
+                                category: {
+                                    type: Type.STRING,
+                                    enum: Object.values(DocumentCategory)
+                                }
+                            }
+                        }
+                    }
+                });
+
+                const { category: suggestedCategory } = JSON.parse(response.text);
+                if (suggestedCategory && Object.values(DocumentCategory).includes(suggestedCategory)) {
+                    doc.category = suggestedCategory;
+                     addAuditLog({
+                        projectId: doc.projectId,
+                        actorId,
+                        action: AuditLogAction.AI_DOCUMENT_CATEGORY_SUGGESTED,
+                        target: { type: 'document', id: doc.id, name: `for "${doc.name}" to ${suggestedCategory}` },
+                    });
+                }
+            } catch (error) {
+                 console.error("AI category suggestion failed:", error);
+                 // Fail silently, keep original category
+            }
           }
           
           // Simulate giving it a "real" URL after approval
@@ -1019,452 +1060,371 @@ ${doc.indexedContent}
       return Promise.reject("Document already acknowledged.");
   },
   
-  generateProjectHealthReport: async (project: Project, todos: Todo[], incidents: SafetyIncident[], logs: AuditLog[], personnel: User[], documents: Document[]): Promise<ProjectHealth> => {
-        const prompt = `
-            Analyze the health of the construction project "${project.name}".
-            
-            Data provided:
-            - Start Date: ${project.createdAt.toLocaleDateString()}
-            - Total Tasks: ${todos.length}
-            - Completed Tasks: ${todos.filter(t => t.status === TodoStatus.DONE).length}
-            - Overdue Tasks: ${todos.filter(t => t.dueDate && new Date(t.dueDate) < new Date() && t.status !== TodoStatus.DONE).length}
-            - High Priority Tasks: ${todos.filter(t => t.priority === TodoPriority.HIGH && t.status !== TodoStatus.DONE).length}
-            - Total Safety Incidents: ${incidents.length}
-            - Critical/High Severity Incidents: ${incidents.filter(i => i.severity === IncidentSeverity.CRITICAL || i.severity === IncidentSeverity.HIGH).length}
-            - Recent Activity Count (last 7 days): ${logs.filter(l => new Date(l.timestamp) > new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)).length}
-            - Team Size: ${personnel.length}
-            - Total Documents: ${documents.length}
-            - Unacknowledged Documents: [Simulation assumes some are unacknowledged if team size > 0]
+  getPhotosByProject: (projectId: number) => simulateDelay(photos.filter(p => p.projectId === projectId).sort((a, b) => b.uploadedAt.getTime() - a.uploadedAt.getTime())),
 
-            Based on this data, provide:
-            1. A "score" from 0-100 (100 is perfect).
-            2. A concise one-sentence "summary" of the project's status.
-            3. A list of 2-3 key "risks" or concerns.
-            4. A list of 2-3 key "positives" or areas of good progress.
-        `;
-
-        try {
-            const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-            const response = await ai.models.generateContent({
-                model: "gemini-2.5-flash",
-                contents: prompt,
-                config: {
-                    responseMimeType: "application/json",
-                    responseSchema: {
-                        type: Type.OBJECT,
-                        properties: {
-                            score: { type: Type.INTEGER },
-                            summary: { type: Type.STRING },
-                            risks: { type: Type.ARRAY, items: { type: Type.STRING } },
-                            positives: { type: Type.ARRAY, items: { type: Type.STRING } },
-                        },
-                    },
-                },
-            });
-
-            const healthReport = JSON.parse(response.text);
-            return healthReport;
-
-        } catch (error) {
-            console.error("AI health report failed:", error);
-            // Provide a fallback in case of API failure
-            return {
-                score: 50,
-                summary: "AI analysis unavailable. Manual review required.",
-                risks: ["Could not connect to AI service to assess risks."],
-                positives: ["System is operational."],
-            };
-        }
-    },
-    
-  inviteUser: (userData: Omit<User, 'id' | 'createdAt'>) => {
-        const newUser: User = {
-            ...userData,
-            id: Math.max(...users.map(u => u.id), 0) + 1,
-            createdAt: new Date(),
-        };
-        users.push(newUser);
-        return simulateDelay(newUser);
-    },
-    
-  updateUser: (userId: number, updates: Partial<User>) => {
-        const user = users.find(u => u.id === userId);
-        if (user) {
-            Object.assign(user, updates);
-            return simulateDelay(user);
-        }
-        return Promise.reject('User not found');
-    },
-
-  addDailyLog: (logData: Omit<DailyLog, 'id'>, actorId: number) => {
-        const newLog: DailyLog = {
-            ...logData,
-            id: Math.max(...dailyLogs.map(l => l.id), 0) + 1,
-        };
-        dailyLogs.unshift(newLog);
-        addAuditLog({
-            projectId: newLog.projectId,
-            actorId: actorId,
-            action: AuditLogAction.DAILY_LOG_ADDED,
-            target: { type: 'document', id: newLog.id, name: `Log for ${newLog.date.toLocaleDateString()}` }
-        });
-        return simulateDelay(newLog);
-    },
-
-  generateDailyLogSummary: async (logs: DailyLog[]): Promise<string> => {
-        if (logs.length === 0) return "No logs to summarize.";
-        
-        const formattedLogs = logs.map(log => 
-            `Date: ${log.date.toLocaleDateString()}\nWeather: ${log.weather}, ${log.temperature}°C\nNotes: ${log.notes}`
-        ).join('\n---\n');
-
-        const prompt = `You are an assistant for a construction project manager. Summarize the following daily site logs into a concise, professional weekly report. Use bullet points to highlight key progress, blockers, and deliveries.
-
-Logs:
-${formattedLogs}`;
-
-        try {
-            const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-            const response = await ai.models.generateContent({
-                model: 'gemini-2.5-flash',
-                contents: prompt,
-            });
-            return response.text;
-        } catch (error) {
-            console.error("AI log summary failed:", error);
-            return "Failed to generate AI summary.";
-        }
-    },
-
-  estimateProjectCostsWithAi: async (project: Project, scope: string, actorId: number): Promise<CostEstimate[]> => {
-        const prompt = `As a construction cost estimator, analyze the provided scope of work for the project "${project.name}" and generate a detailed cost breakdown. Provide realistic but simulated costs.
-
-Scope of Work:
----
-${scope}
----
-
-Return the breakdown as a JSON array.`;
-
-        try {
-            const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-            const response = await ai.models.generateContent({
-                model: "gemini-2.5-flash",
-                contents: prompt,
-                config: {
-                    responseMimeType: "application/json",
-                    responseSchema: {
-                        type: Type.ARRAY,
-                        items: {
-                            type: Type.OBJECT,
-                            properties: {
-                                category: { type: Type.STRING, enum: ['Materials', 'Labor', 'Equipment', 'Permits', 'Other'] },
-                                item: { type: Type.STRING, description: "Specific item or task, e.g., 'Concrete 3000 PSI' or 'Electrician'." },
-                                quantity: { type: Type.STRING, description: "Amount and unit, e.g., '150 cubic yards' or '80 hours'." },
-                                unitCost: { type: Type.NUMBER, description: "Cost per unit, e.g., cost per cubic yard or per hour." },
-                                totalCost: { type: Type.NUMBER, description: "Total estimated cost for this line item." },
-                                justification: { type: Type.STRING, description: "Brief reason for this cost item." }
-                            },
-                        }
-                    },
-                },
-            });
-            
-            addAuditLog({
-                projectId: project.id,
-                actorId: actorId,
-                action: AuditLogAction.COST_ESTIMATE_GENERATED,
-                target: { type: 'document', id: project.id, name: `for project "${project.name}"` }
-            });
-
-            const costEstimates = JSON.parse(response.text);
-            return costEstimates as CostEstimate[];
-
-        } catch (error) {
-            console.error("AI cost estimation failed:", error);
-            throw new Error("Failed to generate cost estimate with AI.");
-        }
-    },
-    
-    // New Equipment and Scheduler functions
-  getEquipmentByCompany: (companyId: number) => simulateDelay(equipment.filter(e => e.companyId === companyId)),
-    
-  assignEquipmentToProject: (equipmentId: number, projectId: number, actorId: number) => {
-        const item = equipment.find(e => e.id === equipmentId);
-        if (item) {
-            item.projectId = projectId;
-            item.status = EquipmentStatus.IN_USE;
-            addAuditLog({ projectId, actorId, action: AuditLogAction.EQUIPMENT_ASSIGNED, target: { type: 'document', id: equipmentId, name: item.name } });
-            return simulateDelay(item);
-        }
-        return Promise.reject('Equipment not found');
-    },
-
-  unassignEquipmentFromProject: (equipmentId: number, actorId: number) => {
-        const item = equipment.find(e => e.id === equipmentId);
-        if (item && item.projectId) {
-            const projectId = item.projectId;
-            item.projectId = undefined;
-            item.status = EquipmentStatus.AVAILABLE;
-            addAuditLog({ projectId, actorId, action: AuditLogAction.EQUIPMENT_UNASSIGNED, target: { type: 'document', id: equipmentId, name: item.name } });
-            return simulateDelay(item);
-        }
-        return Promise.reject('Equipment not found or not assigned');
-    },
-
-  getResourceAssignments: (companyId: number) => {
-        return simulateDelay(resourceAssignments);
-    },
-
-  addResourceAssignment: (assignmentData: Omit<ResourceAssignment, 'id'>, actorId: number) => {
-        const newAssignment: ResourceAssignment = {
-            ...assignmentData,
-            id: Math.max(...resourceAssignments.map(r => r.id), 0) + 1,
-        };
-        resourceAssignments.push(newAssignment);
-        addAuditLog({ projectId: newAssignment.projectId, actorId, action: AuditLogAction.RESOURCE_SCHEDULED, target: { type: 'document', id: newAssignment.id, name: `${newAssignment.resourceType} #${newAssignment.resourceId}` } });
-        return simulateDelay(newAssignment);
-    },
-
-  deleteResourceAssignment: (assignmentId: number, actorId: number) => {
-        const index = resourceAssignments.findIndex(r => r.id === assignmentId);
-        if (index > -1) {
-            const assignment = resourceAssignments[index];
-            resourceAssignments.splice(index, 1);
-            addAuditLog({ projectId: assignment.projectId, actorId, action: AuditLogAction.RESOURCE_SCHEDULED, target: { type: 'document', id: assignment.id, name: `Assignment #${assignment.id} removed` } });
-            return simulateDelay({ success: true });
-        }
-        return Promise.reject('Assignment not found');
-    },
-
-  generateSafetyAnalysis: async (incidents: SafetyIncident[], projectId: number, actorId: number): Promise<{ report: string }> => {
-        if (incidents.length === 0) {
-            return { report: "No safety incidents reported for this project, which is excellent. Maintain vigilance and continue to follow all safety protocols." };
-        }
-
-        const formattedIncidents = incidents.map(i => 
-            `- Type: ${i.type}, Severity: ${i.severity}, Date: ${i.timestamp.toLocaleDateString()}\n  Description: ${i.description}\n  Corrective Action: ${i.correctiveActionTaken || 'None specified'}`
-        ).join('\n');
-
-        const prompt = `You are a construction safety analyst. Analyze the following list of safety incidents from a single project. Identify trends, common root causes, and provide 3-5 actionable, specific recommendations for the Project Manager to improve site safety. Format your response with clear headings (e.g., ### Analysis, ### Trends, ### Recommendations).
-
-Incidents:
-${formattedIncidents}`;
-
-        try {
-            const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-            const response = await ai.models.generateContent({
-                model: 'gemini-2.5-flash',
-                contents: prompt,
-            });
-            
-            addAuditLog({ projectId, actorId, action: AuditLogAction.SAFETY_ANALYSIS_GENERATED, target: { type: 'document', id: projectId, name: `for project` }});
-
-            return { report: response.text };
-        } catch (error) {
-            console.error("AI safety analysis failed:", error);
-            throw new Error("Failed to generate AI safety analysis.");
-        }
-    },
-    
-    // RFI Management
-  createRFI: (rfiData: Omit<RFI, 'id' | 'status' | 'createdAt'>, actorId: number) => {
-        const newRFI: RFI = {
-            ...rfiData,
-            id: Math.max(...rfis.map(r => r.id), 0) + 1,
-            status: RFIStatus.OPEN,
-            createdAt: new Date(),
-        };
-        rfis.unshift(newRFI);
-        addAuditLog({
-            projectId: newRFI.projectId,
-            actorId,
-            action: AuditLogAction.RFI_CREATED,
-            target: { type: 'rfi', id: newRFI.id, name: newRFI.subject },
-        });
-        return simulateDelay(newRFI);
-    },
-
-  updateRFI: (rfiId: number, updates: { answer?: string; status?: RFIStatus; assigneeId?: number }, actorId: number) => {
-        const rfi = rfis.find(r => r.id === rfiId);
-        if (rfi) {
-            if (updates.answer && !rfi.answer) {
-                rfi.answer = updates.answer;
-                rfi.status = RFIStatus.ANSWERED;
-                rfi.answeredAt = new Date();
-                addAuditLog({ projectId: rfi.projectId, actorId, action: AuditLogAction.RFI_ANSWERED, target: { type: 'rfi', id: rfiId, name: rfi.subject }});
-            }
-            if (updates.status) {
-                 rfi.status = updates.status;
-            }
-            if (updates.assigneeId) {
-                 rfi.assigneeId = updates.assigneeId;
-                 addAuditLog({ projectId: rfi.projectId, actorId, action: AuditLogAction.RFI_ASSIGNEE_CHANGED, target: { type: 'rfi', id: rfiId, name: `on "${rfi.subject}"` }});
-            }
-            return simulateDelay(rfi);
-        }
-        return Promise.reject('RFI not found');
-    },
-    
-  suggestRFIAssignee: async (question: string, personnel: User[]): Promise<{ userId: number | null }> => {
-        const formattedPersonnel = personnel.map(p => `- ID: ${p.id}, Name: ${p.name}, Role: ${p.role}`).join('\n');
-        
-        const prompt = `A Request for Information (RFI) has been submitted with the following question:
----
-Question: "${question}"
----
-
-Based on the question, who from the following project team is the most appropriate person to provide an answer? Respond with ONLY the numeric ID of the suggested person. Do not add any other text or explanation.
-
-Project Team:
-${formattedPersonnel}
-`;
-
-        try {
-            const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-            const response = await ai.models.generateContent({
-                model: 'gemini-2.5-flash',
-                contents: prompt,
-            });
-            
-            const suggestedId = parseInt(response.text.trim().match(/\d+/)?.[0] || '', 10);
-            if (!isNaN(suggestedId) && personnel.some(p => p.id === suggestedId)) {
-                return { userId: suggestedId };
-            }
-            return { userId: null };
-            
-        } catch(error) {
-            console.error("AI assignee suggestion failed", error);
-            return { userId: null };
-        }
-    },
-
-  getDocumentsByCompany: (companyId: number) => {
-        const companyProjectIds = new Set(rawProjects.filter(p => p.companyId === companyId).map(p => p.id));
-        const companyDocuments = documents.filter(d => companyProjectIds.has(d.projectId));
-        return simulateDelay(companyDocuments);
-    },
-  getDocumentsByProjectIds: (projectIds: number[]) => {
-        const projectIdsSet = new Set(projectIds);
-        const projectDocuments = documents.filter(d => projectIdsSet.has(d.projectId));
-        return simulateDelay(projectDocuments);
-    },
-    
-  searchAcrossDocuments: async (query: string, projectIds: number[], actorId: number): Promise<AISearchResult> => {
-    const projectIdsSet = new Set(projectIds);
-    const relevantDocs = documents.filter(doc =>
-        projectIdsSet.has(doc.projectId) &&
-        doc.status === DocumentStatus.APPROVED &&
-        doc.indexedContent
-    );
-
-    if (relevantDocs.length === 0) {
-        return { summary: "No relevant documents were found for your search.", sources: [] };
+  uploadPhoto: async (projectId: number, uploaderId: number, base64ImageDataWithPrefix: string): Promise<Photo> => {
+    const base64Data = base64ImageDataWithPrefix.split(',')[1];
+    if (!base64Data) {
+        throw new Error("Invalid image data provided.");
     }
 
-    const context = relevantDocs.map(doc =>
-        `---
-Document ID: ${doc.id}
-Document Name: "${doc.name}"
-Content: ${doc.indexedContent}
----`
-    ).join('\n\n');
-
-    const prompt = `You are a helpful AI assistant for a construction management platform.
-Your task is to answer the user's question based *only* on the content of the documents provided below.
-Synthesize a single, direct answer to the question.
-Then, identify the source documents that support your answer, providing the document ID and a relevant, concise quote or snippet from each.
-
-User's Question: "${query}"
-
-Documents:
-${context}`;
+    let description = 'Image analysis failed.';
+    let tags: string[] = [];
+    let safetyHazard: string | null = 'Analysis pending';
 
     try {
         const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+        const mimeType = base64ImageDataWithPrefix.match(/data:(.*);base64/)?.[1] || 'image/jpeg';
+
+        const imagePart = {
+            inlineData: {
+                mimeType,
+                data: base64Data,
+            },
+        };
+        const textPart = {
+            text: `Analyze this construction site photo. Describe what you see in one sentence. Identify potential safety hazards (e.g., "Improperly stacked materials", "Missing guardrail", "Personnel without PPE"). If no hazards are obvious, respond with "None". Finally, provide a list of relevant tags for searching (e.g., "excavation", "rebar", "concrete pour", "scaffolding").`,
+        };
         const response = await ai.models.generateContent({
-            model: "gemini-2.5-flash",
+            model: 'gemini-2.5-flash',
+            contents: { parts: [imagePart, textPart] },
+            config: {
+                 responseMimeType: "application/json",
+                 responseSchema: {
+                    type: Type.OBJECT,
+                    properties: {
+                        description: { type: Type.STRING },
+                        safety_hazard: { type: Type.STRING },
+                        tags: { type: Type.ARRAY, items: { type: Type.STRING } },
+                    }
+                 }
+            }
+        });
+
+        const parsedResponse = JSON.parse(response.text);
+        description = parsedResponse.description;
+        tags = parsedResponse.tags;
+        safetyHazard = parsedResponse.safety_hazard;
+
+    } catch (error) {
+        console.error("AI photo analysis failed:", error);
+        // Fallback values are already set
+    }
+
+    const newPhoto: Photo = {
+        id: photos.length + 1,
+        projectId,
+        uploaderId,
+        uploadedAt: new Date(),
+        url: base64ImageDataWithPrefix, // Store the full data URL
+        description,
+        tags,
+        safetyHazard,
+    };
+    photos.unshift(newPhoto);
+    addAuditLog({
+        projectId,
+        actorId: uploaderId,
+        action: AuditLogAction.PHOTO_UPLOADED,
+        target: { type: 'photo', id: newPhoto.id, name: newPhoto.description.substring(0, 30) + '...' },
+    });
+    return simulateDelay(newPhoto);
+  },
+  
+  generateDailyLogSummary: async (logs: DailyLog[]): Promise<string> => {
+    if (logs.length === 0) {
+      return "No logs provided for summary.";
+    }
+
+    const formattedLogs = logs.map(log => 
+        `Date: ${new Date(log.date).toLocaleDateString()}\nWeather: ${log.weather}, ${log.temperature}°C\nNotes: ${log.notes}\n`
+    ).join('---\n');
+    
+    const prompt = `You are a helpful assistant for a construction project manager. Your task is to summarize the following daily logs into a professional, concise report. Highlight key progress, any mentioned blockers or delays, and important deliveries or milestones. Use markdown formatting with headings for 'Progress', 'Blockers', and 'Deliveries'.
+
+Here are the logs:
+${formattedLogs}`;
+    
+    try {
+        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-flash',
             contents: prompt,
+        });
+        return response.text;
+    } catch (error) {
+        console.error("AI daily log summary generation failed:", error);
+        throw new Error("Failed to generate AI summary.");
+    }
+  },
+
+  getFlaggedTimesheetsByCompany: (companyId: number) => {
+    const projectIds = rawProjects.filter(p => p.companyId === companyId).map(p => p.id);
+    const flagged = timesheets.filter(t => projectIds.includes(t.projectId) && t.status === TimesheetStatus.FLAGGED);
+    return simulateDelay(flagged);
+  },
+  getRecentActivityByCompany: (companyId: number, limit: number) => {
+    const projectIds = rawProjects.filter(p => p.companyId === companyId).map(p => p.id);
+    const activity = auditLogs.filter(log => log.projectId && projectIds.includes(log.projectId));
+    return simulateDelay(activity.slice(0, limit));
+  },
+  inviteUser: (invite: { email: string, name: string, role: Role, companyId: number }) => {
+    const newUser: User = {
+        ...invite,
+        id: Math.max(...users.map(u => u.id), 0) + 1,
+        createdAt: new Date(),
+    };
+    users.push(newUser);
+    return simulateDelay(newUser);
+  },
+  updateUser: (userId: number, updates: Partial<User>) => {
+      const user = users.find(u => u.id === userId);
+      if (user) {
+          Object.assign(user, updates);
+          return simulateDelay(user);
+      }
+      return Promise.reject('User not found');
+  },
+  getDocumentsByCompany: (companyId: number) => {
+    const projectIds = rawProjects.filter(p => p.companyId === companyId).map(p => p.id);
+    return simulateDelay(documents.filter(d => projectIds.includes(d.projectId)));
+  },
+  getDocumentsByProjectIds: (projectIds: number[]) => {
+      return simulateDelay(documents.filter(doc => projectIds.includes(doc.projectId)));
+  },
+  addDailyLog: (log: Omit<DailyLog, 'id'>, actorId: number) => {
+    const newLog: DailyLog = {
+      ...log,
+      id: Math.max(...dailyLogs.map(l => l.id), 0) + 1,
+    };
+    dailyLogs.unshift(newLog);
+    addAuditLog({
+        projectId: newLog.projectId,
+        actorId,
+        action: AuditLogAction.DAILY_LOG_ADDED,
+        target: { type: 'project', id: newLog.projectId, name: `Log for ${new Date(newLog.date).toLocaleDateString()}` },
+    });
+    return simulateDelay(newLog);
+  },
+  createRFI: (rfi: Omit<RFI, 'id' | 'status' | 'createdAt'>, actorId: number) => {
+    const newRFI: RFI = {
+      ...rfi,
+      id: Math.max(...rfis.map(r => r.id), 0) + 1,
+      status: RFIStatus.OPEN,
+      createdAt: new Date(),
+    };
+    rfis.unshift(newRFI);
+    addAuditLog({
+        projectId: newRFI.projectId,
+        actorId,
+        action: AuditLogAction.RFI_CREATED,
+        target: { type: 'rfi', id: newRFI.id, name: newRFI.subject },
+    });
+    return simulateDelay(newRFI);
+  },
+  updateRFI: (rfiId: number, updates: Partial<RFI>, actorId: number) => {
+      const rfi = rfis.find(r => r.id === rfiId);
+      if (rfi) {
+          if(updates.answer && !rfi.answer) {
+              updates.status = RFIStatus.ANSWERED;
+              updates.answeredAt = new Date();
+              addAuditLog({
+                  projectId: rfi.projectId,
+                  actorId,
+                  action: AuditLogAction.RFI_ANSWERED,
+                  target: { type: 'rfi', id: rfiId, name: rfi.subject },
+              });
+          }
+           if (updates.assigneeId && rfi.assigneeId !== updates.assigneeId) {
+                addAuditLog({
+                  projectId: rfi.projectId,
+                  actorId,
+                  action: AuditLogAction.RFI_ASSIGNEE_CHANGED,
+                  target: { type: 'rfi', id: rfiId, name: rfi.subject },
+              });
+           }
+          Object.assign(rfi, updates);
+          return simulateDelay(rfi);
+      }
+      return Promise.reject("RFI not found.");
+  },
+  getEquipmentByCompany: (companyId: number) => {
+    return simulateDelay(equipment.filter(e => e.companyId === companyId));
+  },
+  assignEquipmentToProject: (equipmentId: number, projectId: number, actorId: number) => {
+      const item = equipment.find(e => e.id === equipmentId);
+      if (item) {
+          item.projectId = projectId;
+          item.status = EquipmentStatus.IN_USE;
+           addAuditLog({
+              projectId: projectId,
+              actorId,
+              action: AuditLogAction.EQUIPMENT_ASSIGNED,
+              target: { type: 'project', id: projectId, name: `Equipment "${item.name}"` },
+          });
+          return simulateDelay({ success: true });
+      }
+      return Promise.reject("Equipment not found.");
+  },
+  unassignEquipmentFromProject: (equipmentId: number, actorId: number) => {
+      const item = equipment.find(e => e.id === equipmentId);
+      if (item && item.projectId) {
+          const projectId = item.projectId;
+          item.projectId = undefined;
+          item.status = EquipmentStatus.AVAILABLE;
+          addAuditLog({
+              projectId: projectId,
+              actorId,
+              action: AuditLogAction.EQUIPMENT_UNASSIGNED,
+              target: { type: 'project', id: projectId, name: `Equipment "${item.name}"` },
+          });
+          return simulateDelay({ success: true });
+      }
+      return Promise.reject("Equipment not found or not assigned.");
+  },
+  getResourceAssignments: (companyId: number) => {
+    const projectIds = rawProjects.filter(p => p.companyId === companyId).map(p => p.id);
+    const companyAssignments = resourceAssignments.filter(ra => projectIds.includes(ra.projectId));
+    return simulateDelay(companyAssignments);
+  },
+  generateProjectHealthReport: async (project: Project, todos: Todo[], incidents: SafetyIncident[], logs: AuditLog[], personnel: User[], documents: Document[]): Promise<ProjectHealth> => {
+      const prompt = `
+        Analyze the health of the construction project "${project.name}".
+        Data points:
+        - Tasks: ${todos.length} total. ${todos.filter(t => t.status === 'Done').length} completed. ${todos.filter(t => t.dueDate && new Date(t.dueDate) < new Date() && t.status !== 'Done').length} overdue.
+        - Safety Incidents: ${incidents.length} total. ${incidents.filter(i => i.severity === IncidentSeverity.HIGH || i.severity === IncidentSeverity.CRITICAL).length} are high/critical severity.
+        - Team size: ${personnel.length} personnel.
+        - Recent Activity: ${logs.slice(0, 5).map(l => l.action).join(', ')}.
+        - Documents: ${documents.length} total. ${documents.filter(d => d.status === DocumentStatus.QUARANTINED).length} quarantined.
+        Based on this data, provide a project health report. Respond with a JSON object.
+      `;
+      try {
+        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+        const response = await ai.models.generateContent({
+            model: "gemini-2.5-flash", contents: prompt,
             config: {
                 responseMimeType: "application/json",
                 responseSchema: {
                     type: Type.OBJECT,
                     properties: {
-                        summary: {
-                            type: Type.STRING,
-                            description: "A synthesized, direct answer to the user's question based on the documents."
-                        },
-                        sources: {
-                            type: Type.ARRAY,
-                            description: "A list of source documents that contributed to the summary.",
-                            items: {
-                                type: Type.OBJECT,
-                                properties: {
-                                    documentId: {
-                                        type: Type.INTEGER,
-                                        description: "The ID of the source document."
-                                    },
-                                    snippet: {
-                                        type: Type.STRING,
-                                        description: "A relevant quote or snippet from the document content that supports the answer."
-                                    }
-                                }
-                            }
-                        }
+                        score: { type: Type.INTEGER, description: "An integer from 0 (critical) to 100 (perfect)." },
+                        summary: { type: Type.STRING, description: "A concise, one-sentence summary of the project's current state." },
+                        risks: { type: Type.ARRAY, items: { type: Type.STRING }, description: "An array of 2-3 strings highlighting the most significant risks or negative trends." },
+                        positives: { type: Type.ARRAY, items: { type: Type.STRING }, description: "An array of 1-2 strings highlighting positive aspects or progress." },
                     }
                 }
             }
         });
-        
-        // Add an audit log for the search action
-        addAuditLog({
-            actorId: actorId,
-            action: AuditLogAction.AI_PROJECT_SEARCH,
-            target: { type: 'project', id: projectIds[0] || 0, name: `Search: "${query.substring(0, 30)}..."` }
-        });
-
-        const result = JSON.parse(response.text) as AISearchResult;
-        return result;
-
-    } catch (error) {
-        console.error("AI cross-document search failed:", error);
-        throw new Error("Failed to get a response from the AI assistant.");
-    }
+        return JSON.parse(response.text);
+      } catch (error) {
+        console.error("AI health report failed:", error);
+        return { score: 40, summary: "AI analysis failed. Manual review required.", risks: ["Could not connect to AI service."], positives: [] };
+      }
   },
-
-  getFlaggedTimesheetsByCompany: (companyId: number) => {
-    const companyProjectIds = new Set(rawProjects.filter(p => p.companyId === companyId).map(p => p.id));
-    const flagged = timesheets.filter(t => companyProjectIds.has(t.projectId) && t.status === TimesheetStatus.FLAGGED);
-    return simulateDelay(flagged);
-  },
-
-  getRecentActivityByCompany: (companyId: number, limit: number = 10) => {
-      const companyProjectIds = new Set(rawProjects.filter(p => p.companyId === companyId).map(p => p.id));
-      const companyActivity = auditLogs.filter(log => log.projectId && companyProjectIds.has(log.projectId));
-      return simulateDelay(companyActivity.slice(0, limit));
-  },
-  
-  getProjectHealthReportsForCompany: async (companyId: number): Promise<(ProjectHealth & { projectId: number })[]> => {
-    const companyProjects = rawProjects
-      .filter(p => p.companyId === companyId)
-      .map(enrichProject)
-      .filter((p): p is Project => p !== undefined);
-
-    const healthReports: (ProjectHealth & { projectId: number })[] = [];
-
-    for (const project of companyProjects) {
-        // In a real app, this would be a single, optimized API call. Here we simulate it.
+  getProjectHealthReportsForCompany: async function(companyId: number): Promise<(ProjectHealth & {projectId: number})[]> {
+    const companyProjects = rawProjects.filter(p => p.companyId === companyId);
+    const reports = await Promise.all(companyProjects.map(async (rawP) => {
+        const p = enrichProject(rawP);
+        if (!p) return null;
         const [todos, incidents, logs, personnel, documents] = await Promise.all([
-            api.getTodosByProject(project.id),
-            api.getIncidentsByProject(project.id),
-            api.getAuditLogsByProject(project.id),
-            api.getUsersByProject(project.id),
-            api.getDocumentsByProject(project.id)
+            this.getTodosByProject(p.id), this.getIncidentsByProject(p.id),
+            this.getAuditLogsByProject(p.id), this.getUsersByProject(p.id),
+            this.getDocumentsByProject(p.id),
         ]);
-        const report = await api.generateProjectHealthReport(project, todos, incidents, logs, personnel, documents);
-        healthReports.push({ ...report, projectId: project.id });
+        const health = await this.generateProjectHealthReport(p, todos, incidents, logs, personnel, documents);
+        return { ...health, projectId: p.id };
+    }));
+    return reports.filter((r): r is (ProjectHealth & {projectId: number}) => r !== null);
+  },
+  suggestRFIAssignee: async (question: string, personnel: User[]): Promise<{ userId: number | null }> => {
+    if (personnel.length === 0) return { userId: null };
+    const formattedPersonnel = personnel.map(p => ({ id: p.id, name: p.name, role: p.role }));
+    const prompt = `You are an expert construction project assistant. Your task is to suggest the best person to answer a Request for Information (RFI) based on their role.
+        RFI Question: "${question}"
+        Available Personnel: ${JSON.stringify(formattedPersonnel, null, 2)}
+        Analyze the question and choose the most appropriate person. Respond with a JSON object.`;
+    try {
+        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+        const response = await ai.models.generateContent({
+            model: "gemini-2.5-flash", contents: prompt,
+            config: {
+                responseMimeType: "application/json",
+                responseSchema: { type: Type.OBJECT, properties: { suggested_user_id: { type: Type.INTEGER } } }
+            }
+        });
+        const result = JSON.parse(response.text);
+        return { userId: result?.suggested_user_id || null };
+    } catch (error) {
+        console.error("AI assignee suggestion failed:", error); return { userId: null };
     }
-
-    return simulateDelay(healthReports, 1000); // Add extra delay to simulate complex operation
+  },
+  estimateProjectCostsWithAi: async (project: Project, scope: string, actorId: number): Promise<CostEstimate[]> => {
+    const prompt = `You are a cost estimator for a construction company. Project: "${project.name}". Scope of Work: "${scope}". Provide a preliminary cost estimate breakdown. Include categories for Materials, Labor, Equipment, Permits, Other. For each line item provide: category, item, quantity, unitCost, totalCost, and justification. Respond with a JSON object containing an array of cost estimate items.`;
+    try {
+        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-flash', contents: prompt,
+            config: {
+                responseMimeType: 'application/json',
+                responseSchema: {
+                    type: Type.OBJECT, properties: {
+                        estimates: { type: Type.ARRAY, items: {
+                            type: Type.OBJECT, properties: {
+                                category: { type: Type.STRING, enum: ['Materials', 'Labor', 'Equipment', 'Permits', 'Other'] },
+                                item: { type: Type.STRING }, quantity: { type: Type.STRING }, unitCost: { type: Type.NUMBER },
+                                totalCost: { type: Type.NUMBER }, justification: { type: Type.STRING },
+                            }
+                        }}
+                    }
+                }
+            }
+        });
+        addAuditLog({ projectId: project.id, actorId, action: AuditLogAction.COST_ESTIMATE_GENERATED, target: { type: 'project', id: project.id, name: `for scope: "${scope.substring(0, 30)}..."` }, });
+        const result = JSON.parse(response.text);
+        return result.estimates || [];
+    } catch (error) {
+        console.error("AI cost estimation failed:", error); throw new Error("Failed to generate AI cost estimate.");
+    }
+  },
+  generateSafetyAnalysis: async (incidents: SafetyIncident[], projectId: number, actorId: number): Promise<{ report: string }> => {
+    const formattedIncidents = incidents.map(i => `- ${i.type} (${i.severity}): ${i.description}`).join('\n');
+    const prompt = `As a construction safety expert, analyze the following safety incidents: ${formattedIncidents}. Provide a concise report with: 1. Key Trends, 2. Potential Root Causes, 3. Recommendations. Format as markdown.`;
+    try {
+        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+        const response = await ai.models.generateContent({ model: 'gemini-2.5-flash', contents: prompt });
+        addAuditLog({ projectId, actorId, action: AuditLogAction.SAFETY_ANALYSIS_GENERATED, target: { type: 'project', id: projectId, name: `for project` } });
+        return { report: response.text };
+    } catch (error) {
+        console.error("AI safety analysis failed:", error); throw new Error("Failed to generate AI safety analysis.");
+    }
+  },
+  searchAcrossDocuments: async (query: string, projectIds: number[], actorId: number): Promise<AISearchResult> => {
+    const relevantDocs = documents.filter(d => projectIds.includes(d.projectId) && d.status === DocumentStatus.APPROVED && d.indexedContent);
+    if (relevantDocs.length === 0) return { summary: "No relevant documents were found to search within.", sources: [] };
+    const context = relevantDocs.map(d => `--- Document ID: ${d.id}, Name: ${d.name} ---\n${d.indexedContent}\n--- End Document ---`).join('\n\n');
+    const prompt = `Answer the user's question based ONLY on the provided document contexts. Question: "${query}". Contexts: ${context}. Task: 1. Provide a concise "summary". 2. Identify "sources", extracting a relevant "snippet" for each. Respond with a JSON object.`;
+    try {
+        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-flash', contents: prompt,
+            config: {
+                responseMimeType: "application/json",
+                responseSchema: {
+                    type: Type.OBJECT, properties: {
+                        summary: { type: Type.STRING },
+                        sources: { type: Type.ARRAY, items: {
+                            type: Type.OBJECT, properties: { documentId: { type: Type.INTEGER }, snippet: { type: Type.STRING }, }
+                        }}
+                    }
+                }
+            }
+        });
+        if (projectIds.length === 1) {
+            addAuditLog({ projectId: projectIds[0], actorId, action: AuditLogAction.AI_PROJECT_SEARCH, target: { type: 'project', id: projectIds[0], name: `query: "${query.substring(0, 30)}..."` } });
+        }
+        return JSON.parse(response.text);
+    } catch (error) {
+        console.error("AI search failed:", error); throw new Error("Failed to perform AI search.");
+    }
   },
 };

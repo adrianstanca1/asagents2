@@ -1,7 +1,5 @@
 
 
-
-
 export type View = 'dashboard' | 'users' | 'projects' | 'timesheets' | 'documents' | 'tools' | 'equipment' | 'settings';
 
 export enum Role {
@@ -284,6 +282,17 @@ export interface RFI {
     answeredAt?: Date;
 }
 
+export interface Photo {
+    id: number;
+    projectId: number;
+    uploaderId: number;
+    uploadedAt: Date;
+    url: string; // base64 data URL for mock
+    description: string; // AI generated
+    tags: string[]; // AI generated
+    safetyHazard?: string | null; // AI identified
+}
+
 export enum AuditLogAction {
   TIMESHEET_APPROVED = 'Timesheet Approved',
   TIMESHEET_REJECTED = 'Timesheet Rejected',
@@ -299,6 +308,7 @@ export enum AuditLogAction {
   DOCUMENT_LINK_ADDED = 'Document Link Added',
   DOCUMENT_LINK_REMOVED = 'Document Link Removed',
   DOCUMENT_AI_QUERY = 'Document AI Query',
+  PHOTO_UPLOADED = 'Photo Uploaded',
   TODO_ADDED = 'To-Do Added',
   TODO_COMPLETED = 'To-Do Completed',
   TODO_TEXT_CHANGED = 'To-Do Text Changed',
@@ -327,6 +337,7 @@ export enum AuditLogAction {
   RFI_ANSWERED = 'RFI Answered',
   RFI_ASSIGNEE_CHANGED = 'RFI Assignee Changed',
   AI_PROJECT_SEARCH = 'AI Project Search',
+  AI_DOCUMENT_CATEGORY_SUGGESTED = 'AI Document Category Suggested',
 }
 
 export interface AuditLog {
@@ -335,7 +346,7 @@ export interface AuditLog {
   actorId: number; // The user who performed the action
   action: AuditLogAction;
   target?: {
-    type: 'user' | 'document' | 'timesheet' | 'todo' | 'safetyIncident' | 'rfi' | 'project';
+    type: 'user' | 'document' | 'timesheet' | 'todo' | 'safetyIncident' | 'rfi' | 'project' | 'photo';
     id: number;
     name: string;
   };

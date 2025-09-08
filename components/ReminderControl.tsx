@@ -111,6 +111,9 @@ export const ReminderControl: React.FC<ReminderControlProps> = ({ todo, user, on
                                 </button>
                             </li>
                         )}
+                         {reminderOptions.length === 0 && !hasReminder && (
+                            <li className="px-2 py-1 text-sm text-slate-500">No upcoming reminder times available.</li>
+                        )}
                     </ul>
                 </div>
             )}
